@@ -150,59 +150,68 @@ const urlAndroid =
 const urlIOs =
     "https://interview-marketing-eng-dev.s3.eu-west-1.amazonaws.com/ios.top100.json";
 
-const getJsonAppsFromURL = (url) => {
-    let settings = { method: "Get" };
+const createNewAppsArrayFromJson = async (url) => {
+    try {
+        const settings = { method: "Get" };
+        const res = await fetch(url, settings);
+        const apps = await res.json();
+        const flattenApps = apps.flat(3);
 
-    fetch(url, settings)
-        .then((res) => res.json())
-        .then((json) => {
-            return json;
+        let new_apps = [];
+
+        flattenApps.forEach((app) => {
+            // only add apps that have a rank, being the sorting criteria
+            if (app.rank) {
+                new_apps.push({
+                    rank: app.rank,
+                    publisherId: app.publisher_id,
+                    name: app.name,
+                    platform: app.os,
+                    // storeId: ???, // not sure of the mapping for storeId, so omitting by now
+                    bundleId: app.bundle_id,
+                    appVersion: app.version,
+                    isPublished: true, // not sure of the mapping for isPublished, defaulting to true
+                });
+            }
         });
+        return new_apps;
+    } catch (err) {
+        return err;
+    }
 };
 
-const createNewAppsArray = (apps) => {
-    let new_apps = [];
-    const flattenApps = apps.flat(3);
+app.post("/api/games/populate", async (req, res) => {
+    Promise.all([
+        createNewAppsArrayFromJson(urlIOs),
+        createNewAppsArrayFromJson(urlAndroid),
+    ]).then((apps) => {
+        const new_apps = apps.flat();
 
-    flattenApps.forEach((app) => {
-        // only add apps that have a rating, being the sorting criteria
-        if (app.rating) {
-            new_apps.push({
-                publisherId: app.publisher_id,
-                name: app.name,
-                platform: app.os,
-                // storeId: ???, // not sure of the mapping for storeId, so omitting by now
-                bundleId: app.bundle_id,
-                appVersion: app.version,
-                isPublished: true, // not sure of the mapping for isPublished, defaulting to true
+        // Not sure if the spec meant 200 apps (top 100 apps for each platform), I'm assuming the top 100 in total combined for both platforms
+        const top_apps = new_apps.sort((app1, app2) =>
+            app1.rank < app2.rank ? 1 : app1.rank > app2.rank ? -1 : 0
+        );
+
+        const top_100_apps = top_apps.slice(0, 100).map((top_app) => {
+            const { rank, ...rest } = top_app;
+            return rest;
+        });
+
+        return db.Game.bulkCreate(top_100_apps)
+            .then((new_top_apps) => {
+                const ids = new_top_apps.map((nt_app) => {
+                    return nt_app.id;
+                });
+                return res.send(ids);
+            })
+            .catch((err) => {
+                console.log(
+                    "***There was an error populating the db with app",
+                    JSON.stringify(err)
+                );
+                return res.status(400).send(err);
             });
-        }
     });
-    return new_apps;
-};
-
-app.post("/api/games/populate", (req, res) => {
-    const ios_apps = createNewAppsArray(getJsonAppsFromURL(urlIOs));
-    const android_apps = createNewAppsArray(getJsonAppsFromURL(urlAndroid));
-
-    const new_apps = [...ios_apps, ...android_apps];
-
-    // Not sure if the spec meant 200 apps (top 100 apps for each platform), I'm assuming the top 100 in total combined for both platforms
-    const top_apps = new_apps.sort((app1, app2) =>
-        app1.rating < app2.rating ? 1 : app1.rating > app2.rating ? -1 : 0
-    );
-
-    const top_100_apps = top_apps.slice(0, 100);
-
-    return db.Game.bulkCreate(top_100_apps)
-        .then((game) => res.send(game))
-        .catch((err) => {
-            console.log(
-                "***There was an error populating the db with app",
-                JSON.stringify(err)
-            );
-            return res.status(400).send(err);
-        });
 });
 
 app.listen(3000, () => {
