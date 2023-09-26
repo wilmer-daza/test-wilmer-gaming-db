@@ -187,9 +187,11 @@ app.post("/api/games/populate", (req, res) => {
 
     const new_apps = [...ios_apps, ...android_apps];
 
+    // Not sure if the spec meant 200 apps (top 100 apps for each platform), I'm assuming the top 100 in total combined for both platforms
     const top_apps = new_apps.sort((app1, app2) =>
         app1.rating < app2.rating ? 1 : app1.rating > app2.rating ? -1 : 0
     );
+
     const top_100_apps = top_apps.slice(0, 100);
 
     return db.Game.bulkCreate(top_100_apps)
