@@ -97,29 +97,35 @@ app.put("/api/games/:id", (req, res) => {
     });
 });
 
+const createQueryOperators = (name, platform) => {
+    let queryOps = [];
+
+    if (name) {
+        queryOps.push({
+            name: {
+                [Op.like]: `%${name}%`,
+            },
+        });
+    }
+
+    if (platform) {
+        queryOps.push({
+            platform: {
+                [Op.like]: `%${platform}%`,
+            },
+        });
+    }
+
+    return queryOps;
+};
+
 app.post("/api/games/search", (req, res) => {
     const { name, platform } = req.body;
 
     if (!name && !platform) {
         getAllGames(res);
     } else {
-        let queryOps = [];
-
-        if (name) {
-            queryOps.push({
-                name: {
-                    [Op.like]: `%${name}%`,
-                },
-            });
-        }
-
-        if (platform) {
-            queryOps.push({
-                platform: {
-                    [Op.like]: `%${platform}%`,
-                },
-            });
-        }
+        let queryOps = createQueryOperators(name, platform);
 
         //Sequelize support match over indexes only on PG
         db.Game.findAll({
@@ -144,7 +150,7 @@ const urlAndroid =
 const urlIOs =
     "https://interview-marketing-eng-dev.s3.eu-west-1.amazonaws.com/ios.top100.json";
 
-const getJsonAppFromURL = (url) => {
+const getJsonAppsFromURL = (url) => {
     let settings = { method: "Get" };
 
     fetch(url, settings)
@@ -159,26 +165,34 @@ const createNewAppsArray = (apps) => {
     const flattenApps = apps.flat(3);
 
     flattenApps.forEach((app) => {
-        new_apps.push({
-            publisherId: app.publisher_id,
-            name: app.name,
-            platform: app.os,
-            // storeId: ???, //TODO: not sure of the mapping of storeId, so omitting by now
-            bundleId: app.bundle_id,
-            appVersion: app.version,
-            isPublished: true,
-        });
+        // only add apps that have a rating, being the sorting criteria
+        if (app.rating) {
+            new_apps.push({
+                publisherId: app.publisher_id,
+                name: app.name,
+                platform: app.os,
+                // storeId: ???, // not sure of the mapping for storeId, so omitting by now
+                bundleId: app.bundle_id,
+                appVersion: app.version,
+                isPublished: true, // not sure of the mapping for isPublished, defaulting to true
+            });
+        }
     });
     return new_apps;
 };
 
 app.post("/api/games/populate", (req, res) => {
-    const ios_apps = createNewAppsArray(getJsonAppFromURL(urlIOs));
-    const android_apps = createNewAppsArray(getJsonAppFromURL(urlAndroid));
+    const ios_apps = createNewAppsArray(getJsonAppsFromURL(urlIOs));
+    const android_apps = createNewAppsArray(getJsonAppsFromURL(urlAndroid));
 
     const new_apps = [...ios_apps, ...android_apps];
 
-    return db.Game.bulkCreate(new_apps)
+    const top_apps = new_apps.sort((app1, app2) =>
+        app1.rating < app2.rating ? 1 : app1.rating > app2.rating ? -1 : 0
+    );
+    const top_100_apps = top_apps.slice(0, 100);
+
+    return db.Game.bulkCreate(top_100_apps)
         .then((game) => res.send(game))
         .catch((err) => {
             console.log(
