@@ -130,7 +130,7 @@ app.post("/api/games/search", (req, res) => {
         //Sequelize support match over indexes only on PG
         db.Game.findAll({
             where: {
-                [Op.or]: queryOps,
+                [Op.and]: queryOps,
             },
         })
             .then((games) => res.send(games))
