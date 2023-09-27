@@ -127,7 +127,8 @@ app.post("/api/games/search", (req, res) => {
     } else {
         let queryOps = createQueryOperators(name, platform);
 
-        //Sequelize support match over indexes only on PG
+        //Sequelize support match over indexes only on PG, so using like instead
+        // I created an index on name and platform, since those are the fields that are being searched
         db.Game.findAll({
             where: {
                 [Op.and]: queryOps,
@@ -151,67 +152,72 @@ const urlIOs =
     "https://interview-marketing-eng-dev.s3.eu-west-1.amazonaws.com/ios.top100.json";
 
 const createNewAppsArrayFromJson = async (url) => {
-    try {
-        const settings = { method: "Get" };
-        const res = await fetch(url, settings);
-        const apps = await res.json();
-        const flattenApps = apps.flat(3);
+    const settings = { method: "Get" };
+    const res = await fetch(url, settings);
+    const apps = await res.json();
+    const flattenApps = apps.flat(); // assuming only one level of nesting from files
 
-        let new_apps = [];
+    let new_apps = [];
 
-        flattenApps.forEach((app) => {
-            // only add apps that have a rank, being the sorting criteria
-            if (app.rank) {
-                new_apps.push({
-                    rank: app.rank,
-                    publisherId: app.publisher_id,
-                    name: app.name,
-                    platform: app.os,
-                    // storeId: ???, // not sure of the mapping for storeId, so omitting by now
-                    bundleId: app.bundle_id,
-                    appVersion: app.version,
-                    isPublished: true, // not sure of the mapping for isPublished, defaulting to true
-                });
-            }
-        });
-        return new_apps;
-    } catch (err) {
-        return err;
-    }
+    flattenApps.forEach((app) => {
+        // only add apps that have a rank, being the sorting criteria
+        if (app.rank) {
+            new_apps.push({
+                rank: app.rank,
+                publisherId: app.publisher_id,
+                name: app.name,
+                platform: app.os,
+                storeId: app.appId, // not sure of the mapping for storeId, so using appId
+                bundleId: app.bundle_id,
+                appVersion: app.version,
+                isPublished: true, // not sure of the mapping for isPublished, defaulting to true
+            });
+        }
+    });
+    return new_apps;
 };
-
+// NodeJs being single threaded, I'm using async/await to avoid blocking the event loop
+//TODO: refactor all the other routes to use async/await
 app.post("/api/games/populate", async (req, res) => {
     Promise.all([
         createNewAppsArrayFromJson(urlIOs),
         createNewAppsArrayFromJson(urlAndroid),
-    ]).then((apps) => {
-        const new_apps = apps.flat();
+    ])
+        .then((apps_from_files) => {
+            const new_apps = apps_from_files.flat();
 
-        // Not sure if the spec meant 200 apps (top 100 apps for each platform), I'm assuming the top 100 in total combined for both platforms
-        const top_apps = new_apps.sort((app1, app2) =>
-            app1.rank < app2.rank ? 1 : app1.rank > app2.rank ? -1 : 0
-        );
+            // Not sure if the spec meant 200 apps (top 100 apps for each platform), I'm assuming the top 100 in total combined for both platforms
+            const top_apps = new_apps.sort((app1, app2) =>
+                app1.rank < app2.rank ? 1 : app1.rank > app2.rank ? -1 : 0
+            );
 
-        const top_100_apps = top_apps.slice(0, 100).map((top_app) => {
-            const { rank, ...rest } = top_app;
-            return rest;
-        });
-
-        return db.Game.bulkCreate(top_100_apps)
-            .then((new_top_apps) => {
-                const ids = new_top_apps.map((nt_app) => {
-                    return nt_app.id;
-                });
-                return res.send(ids);
-            })
-            .catch((err) => {
-                console.log(
-                    "***There was an error populating the db with app",
-                    JSON.stringify(err)
-                );
-                return res.status(400).send(err);
+            const top_100_apps = top_apps.slice(0, 100).map((top_app) => {
+                const { rank, ...rest } = top_app;
+                return rest;
             });
-    });
+
+            return db.Game.bulkCreate(top_100_apps)
+                .then((new_top_apps) => {
+                    const ids = new_top_apps.map((nt_app) => {
+                        return nt_app.id;
+                    });
+                    return res.send(ids);
+                })
+                .catch((err) => {
+                    console.log(
+                        "***There was an error populating the db with app",
+                        JSON.stringify(err)
+                    );
+                    return res.status(400).send(err);
+                });
+        })
+        .catch((err) => {
+            console.log(
+                "***There was an error getting the apps from the jsons files",
+                JSON.stringify(err)
+            );
+            return res.status(400).send(err);
+        });
 });
 
 app.listen(3000, () => {
