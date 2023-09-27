@@ -176,9 +176,8 @@ const createNewAppsArrayFromJson = async (url) => {
     });
     return new_apps;
 };
-// NodeJs being single threaded, I'm using async/await to avoid blocking the event loop
-//TODO: refactor all the other routes to use async/await
-app.post("/api/games/populate", async (req, res) => {
+
+app.post("/api/games/populate", (req, res) => {
     Promise.all([
         createNewAppsArrayFromJson(urlIOs),
         createNewAppsArrayFromJson(urlAndroid),
